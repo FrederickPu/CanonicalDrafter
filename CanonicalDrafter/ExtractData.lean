@@ -523,7 +523,7 @@ def processAllFiles (noDeps : Bool) (maxConcurrency : Nat := 16) : IO Unit := do
   while idx < filesToProcess.size do
     -- take a batch of files up to maxConcurrency
     let batch := filesToProcess.extract idx (Nat.min (idx + maxConcurrency) filesToProcess.size)
-    let mut batchTasks : Array (Task (Except IO.Error Unit) × FilePath) := #[]
+    let mut batchTasks : Array (Task (Except IO.Error String) × FilePath) := #[]
 
     -- launch tasks for this batch
     for path in batch do
