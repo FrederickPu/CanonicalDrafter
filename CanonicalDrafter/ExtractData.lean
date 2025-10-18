@@ -505,27 +505,40 @@ def shouldProcess (path : FilePath) (noDeps : Bool) : IO Bool := do
   return ← oleanPath.pathExists
 
 /--
-Trace all *.lean files in the current directory whose corresponding *.olean file exists.
+Trace all *.lean files in the current directory whose corresponding *.olean file exists,
+limiting the number of concurrent tasks to `maxConcurrency`.
 -/
-def processAllFiles (noDeps : Bool) : IO Unit := do
-    let cwd ← IO.currentDir
-    assert! cwd.fileName != "lean4"
-    println! "Extracting data at {cwd}"
+def processAllFiles (noDeps : Bool) (maxConcurrency : Nat := 16) : IO Unit := do
+  let cwd ← IO.currentDir
+  assert! cwd.fileName != "lean4"
+  println! "Extracting data at {cwd} with max {maxConcurrency} concurrent processes"
 
-    let mut tasks := #[]
-    for path in ← System.FilePath.walkDir cwd do
-      if ← shouldProcess path noDeps then
-        let t ← IO.asTask $ IO.Process.run
-          {cmd := "lake", args := #["env", "lean", "--run", "ExtractData.lean", path.toString]}
-        tasks := tasks.push (t, path)
+  -- collect all files to process
+  let mut filesToProcess := #[]
+  for path in ← System.FilePath.walkDir cwd do
+    if ← shouldProcess path noDeps then
+      filesToProcess := filesToProcess.push path
 
-    for (t, path) in tasks do
+  let mut idx := 0
+  while idx < filesToProcess.size do
+    -- take a batch of files up to maxConcurrency
+    let batch := filesToProcess.extract idx (Nat.min (idx + maxConcurrency) filesToProcess.size)
+    let mut batchTasks : Array (Task (Except IO.Error Unit) × FilePath) := #[]
+
+    -- launch tasks for this batch
+    for path in batch do
+      let t ← IO.asTask $ IO.Process.run
+        { cmd := "lake", args := #["env", "lean", "--run", "ExtractData.lean", path.toString] }
+      batchTasks := batchTasks.push (t, path)
+
+    -- wait for this batch to finish
+    for (t, path) in batchTasks do
       match ← IO.wait t with
-      | Except.error _ =>
-        println! s!"WARNING: Failed to process {path}"
-        pure ()
-        -- throw e
-      | Except.ok _ => pure ()
+      | Except.error _ => println! s!"WARNING: Failed to process {path}"
+      | Except.ok _    => pure ()
+
+    idx := idx + maxConcurrency
+
 
 
 unsafe def main (args : List String) : IO Unit := do
